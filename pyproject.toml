@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "my-ipc-utils"          # 包名，pip 安装时使用
+version = "0.1.0"                 # 版本号
+authors = [
+  { name="Evolonation", email="zhaozhengyang@buaa.edu.cn" },
+]
+description = "My tools for conversation between evaluation script and models"
+# readme = "README.md"              # 可选
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+# 如果你的工具有其他依赖，比如 requests
+dependencies = [
+  "numpy",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}

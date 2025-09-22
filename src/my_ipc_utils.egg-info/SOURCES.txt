@@ -1,0 +1,8 @@
+pyproject.toml
+src/MyIPC/ipc_client.py
+src/MyIPC/ipc_server.py
+src/my_ipc_utils.egg-info/PKG-INFO
+src/my_ipc_utils.egg-info/SOURCES.txt
+src/my_ipc_utils.egg-info/dependency_links.txt
+src/my_ipc_utils.egg-info/requires.txt
+src/my_ipc_utils.egg-info/top_level.txt
