@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "my-ipc-utils"          # 包名，pip 安装时使用
+name = "my-ipc"          # 包名，pip 安装时使用, 必须使用小写字母和连字符
 version = "0.1.0"                 # 版本号
 authors = [
   { name="Evolonation", email="zhaozhengyang@buaa.edu.cn" },

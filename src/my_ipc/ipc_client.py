@@ -4,10 +4,16 @@ import json
 import os
 import socket
 import time
-from typing import Any
+from typing import Any, Dict
 import uuid
 
 import numpy as np
+from my_ipc.public import (
+    ShmArrayInfo,
+    ShmArray,
+    generate_socket_path,
+    generate_shm_name,
+)
 
 
 class IPCClient:
@@ -15,26 +21,28 @@ class IPCClient:
 
     def __init__(
         self,
-        server_cmd: str,  # 启动服务器的命令，需包含 {socket_path} 和 {shm_name} 占位符
-        shm_shape: tuple[int, ...],
-        shm_dtype: type = np.float32,
+        server_cmd: str,  # 启动服务器的命令，需包含 {id} 占位符
+        shm_arrs: dict[str, ShmArrayInfo] | ShmArrayInfo = {},
         max_wait: int = 60,
     ):
         self.id = uuid.uuid4().hex
-        self.socket_path = f"/tmp/ipc_socket_{self.id}"
-        self.shm_name = f"ipc_shm_{self.id}"
-        self.shm_shape = shm_shape
-        self.shm_dtype = shm_dtype
-
-        # 创建共享内存
-        self.shm = shared_memory.SharedMemory(
-            create=True,
-            size=np.zeros(shm_shape, dtype=shm_dtype).nbytes,
-            name=self.shm_name,
-        )
+        self.socket_path = generate_socket_path(self.id)
+        if isinstance(shm_arrs, ShmArrayInfo):
+            shm_arrs = {"default": shm_arrs}
+        self.shm_arrs: Dict[str, ShmArray] = {
+            name: ShmArray(
+                info=shm_arr,
+                shm=shared_memory.SharedMemory(
+                    create=True,
+                    size=np.zeros(shm_arr.shape, dtype=shm_arr.dtype).nbytes,
+                    name=generate_shm_name(self.id, name),
+                ),
+            )
+            for name, shm_arr in shm_arrs.items()
+        }
 
         # 启动服务器进程
-        cmd = server_cmd.format(socket_path=self.socket_path, shm_name=self.shm_name)
+        cmd = server_cmd.format(id=self.id)
         self.process = sp.Popen(cmd, shell=True, executable="/bin/bash")
 
         # 等待服务器就绪
@@ -54,7 +62,12 @@ class IPCClient:
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.connect(self.socket_path)
 
-    def send_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        shm_infos = {
+            name: shm_arr.info.to_json() for name, shm_arr in self.shm_arrs.items()
+        }
+        self.socket.send(json.dumps(shm_infos).encode("utf-8"))
+
+    def send_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """发送请求并接收响应"""
         self.socket.send(json.dumps(request).encode("utf-8"))
         response_data = self.socket.recv(4096).decode("utf-8")
@@ -62,12 +75,14 @@ class IPCClient:
             raise RuntimeError("服务器处理请求时出错")
         return json.loads(response_data)
 
-    def read_shared_array(self) -> np.ndarray:
+    def read_shared_array(self, name: str = "default") -> np.ndarray:
         """从共享内存读取numpy数组"""
+        shm_arr = self.shm_arrs[name]
+
         shared_array = np.ndarray(
-            self.shm_shape, dtype=self.shm_dtype, buffer=self.shm.buf
+            shm_arr.info.shape, dtype=shm_arr.info.dtype, buffer=shm_arr.shm.buf
         )
-        result = np.zeros(self.shm_shape, dtype=self.shm_dtype)
+        result = np.zeros(shm_arr.info.shape, dtype=shm_arr.info.dtype)
         np.copyto(result, shared_array)
         return result
 
@@ -85,9 +100,10 @@ class IPCClient:
             except sp.TimeoutExpired:
                 self.process.terminate()
                 self.process.wait(timeout=5)
-        if hasattr(self, "shm"):
-            self.shm.close()
-            self.shm.unlink()
+        if hasattr(self, "shm_arrs"):
+            for shm_arr in self.shm_arrs.values():
+                shm_arr.shm.close()
+                shm_arr.shm.unlink()
 
     def __del__(self):
         self.close()
