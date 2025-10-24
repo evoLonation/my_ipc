@@ -13,6 +13,8 @@ from my_ipc.public import (
     ShmArray,
     generate_socket_path,
     generate_shm_name,
+    recv_str,
+    send_str,
 )
 
 
@@ -65,12 +67,12 @@ class IPCClient:
         shm_infos = {
             name: shm_arr.info.to_json() for name, shm_arr in self.shm_arrs.items()
         }
-        self.socket.send(json.dumps(shm_infos).encode("utf-8"))
+        send_str(self.socket, json.dumps(shm_infos))
 
     def send_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """发送请求并接收响应"""
-        self.socket.send(json.dumps(request).encode("utf-8"))
-        response_data = self.socket.recv(4096).decode("utf-8")
+        send_str(self.socket, json.dumps(request))
+        response_data = recv_str(self.socket)
         if response_data == "ERROR":
             raise RuntimeError("服务器处理请求时出错")
         return json.loads(response_data)
@@ -90,7 +92,7 @@ class IPCClient:
         """关闭连接和清理资源"""
         if hasattr(self, "socket"):
             try:
-                self.socket.send("QUIT".encode("utf-8"))
+                send_str(self.socket, "QUIT")
             except Exception:
                 pass
             self.socket.close()

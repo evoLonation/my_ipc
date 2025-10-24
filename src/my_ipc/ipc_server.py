@@ -5,7 +5,14 @@ import socket
 from typing import Any, Dict
 
 import numpy as np
-from my_ipc.public import ShmArrayInfo, ShmArray, generate_socket_path, generate_shm_name
+from my_ipc.public import (
+    ShmArrayInfo,
+    ShmArray,
+    generate_socket_path,
+    generate_shm_name,
+    recv_str,
+    send_str,
+)
 
 
 class IPCServer:
@@ -26,7 +33,7 @@ class IPCServer:
             
             client_socket, _ = server_socket.accept()
 
-            data = client_socket.recv(4096).decode("utf-8")
+            data = recv_str(client_socket)
             shm_infos = json.loads(data)
             for name, info_json in shm_infos.items():
                 info = ShmArrayInfo.from_json(info_json)
@@ -41,7 +48,7 @@ class IPCServer:
             self.after_shm_created()
             
             while True:
-                data = client_socket.recv(4096).decode("utf-8")
+                data = recv_str(client_socket)
                 if not data or data.strip() == "QUIT":
                     break
                 
@@ -49,13 +56,10 @@ class IPCServer:
                 try:
                     response = self.handle_request(request)
                 except Exception:
-                    response = "ERROR"
-                    response_bytes = response.encode("utf-8")
-                    client_socket.send(response_bytes)
+                    send_str(client_socket, "ERROR")
                     raise
                 
-                response_bytes = json.dumps(response).encode("utf-8")
-                client_socket.send(response_bytes)
+                send_str(client_socket, json.dumps(response))
             
             client_socket.close()
         
