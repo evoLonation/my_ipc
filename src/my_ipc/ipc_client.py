@@ -4,11 +4,12 @@ import json
 import os
 import socket
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Union, cast, overload, Tuple
 import uuid
 
 import numpy as np
 from my_ipc.public import (
+    IPCMessageType,
     ShmArrayInfo,
     ShmArray,
     generate_socket_path,
@@ -19,12 +20,11 @@ from my_ipc.public import (
 
 
 class IPCClient:
-    """IPC客户端"""
 
     def __init__(
         self,
         server_cmd: str,  # 启动服务器的命令，需包含 {id} 占位符
-        shm_arrs: dict[str, ShmArrayInfo] | ShmArrayInfo = {},
+        shm_arrs: Union[Dict[str, ShmArrayInfo], ShmArrayInfo] = {},
         max_wait: int = 60,
     ):
         self.id = uuid.uuid4().hex
@@ -33,12 +33,7 @@ class IPCClient:
             shm_arrs = {"default": shm_arrs}
         self.shm_arrs: Dict[str, ShmArray] = {
             name: ShmArray(
-                info=shm_arr,
-                shm=shared_memory.SharedMemory(
-                    create=True,
-                    size=np.zeros(shm_arr.shape, dtype=shm_arr.dtype).nbytes,
-                    name=generate_shm_name(self.id, name),
-                ),
+                info=shm_arr, name=generate_shm_name(self.id, name), create=True
             )
             for name, shm_arr in shm_arrs.items()
         }
@@ -65,31 +60,57 @@ class IPCClient:
         self.socket.connect(self.socket_path)
 
         shm_infos = {
-            name: shm_arr.info.to_json() for name, shm_arr in self.shm_arrs.items()
+            name: shm_arr.get_info().to_json()
+            for name, shm_arr in self.shm_arrs.items()
         }
         send_str(self.socket, json.dumps(shm_infos))
 
-    def send_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """发送请求并接收响应"""
+    @overload
+    def send_request(self, request: Dict[str, Any]) -> Dict[str, Any]: ...
+
+    @overload
+    def send_request(
+        self, request: Dict[str, Any], tmp_shm: ShmArrayInfo
+    ) -> Tuple[Dict[str, Any], np.ndarray]: ...
+
+    def send_request(
+        self, request: Dict[str, Any], tmp_shm: Union[ShmArrayInfo, None] = None
+    ):
+        tmp_shm_arr = None
+        if tmp_shm is not None:
+            tmp_name = uuid.uuid4().hex
+            tmp_shm_arr = ShmArray(
+                info=tmp_shm,
+                name=generate_shm_name(self.id, tmp_name),
+                create=True,
+            )
+            send_str(self.socket, IPCMessageType.TMP_SHARED_ARRAY.value)
+            send_str(
+                self.socket,
+                json.dumps(
+                    {
+                        "info": tmp_shm.to_json(),
+                        "name": tmp_name,
+                    }
+                ),
+            )
+
         send_str(self.socket, json.dumps(request))
         response_data = recv_str(self.socket)
         if response_data == "ERROR":
             raise RuntimeError("服务器处理请求时出错")
-        return json.loads(response_data)
+        if tmp_shm is not None:
+            tmp_shm_arr = cast(ShmArray, tmp_shm_arr)
+            tmp_data = tmp_shm_arr.read()
+            tmp_shm_arr.close()
+            return json.loads(response_data), tmp_data
+        else:
+            return json.loads(response_data)
 
-    def read_shared_array(self, name: str = "default") -> np.ndarray:
-        """从共享内存读取numpy数组"""
-        shm_arr = self.shm_arrs[name]
-
-        shared_array = np.ndarray(
-            shm_arr.info.shape, dtype=shm_arr.info.dtype, buffer=shm_arr.shm.buf
-        )
-        result = np.zeros(shm_arr.info.shape, dtype=shm_arr.info.dtype)
-        np.copyto(result, shared_array)
-        return result
+    def get_shared_array(self, name: str = "default") -> ShmArray:
+        return self.shm_arrs[name]
 
     def close(self):
-        """关闭连接和清理资源"""
         if hasattr(self, "socket"):
             try:
                 send_str(self.socket, "QUIT")
@@ -104,8 +125,7 @@ class IPCClient:
                 self.process.wait(timeout=5)
         if hasattr(self, "shm_arrs"):
             for shm_arr in self.shm_arrs.values():
-                shm_arr.shm.close()
-                shm_arr.shm.unlink()
+                shm_arr.close()
 
     def __del__(self):
         self.close()

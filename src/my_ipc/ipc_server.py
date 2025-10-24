@@ -2,10 +2,11 @@ import json
 from multiprocessing import resource_tracker, shared_memory
 import os
 import socket
-from typing import Any, Dict
+from typing import Any, Dict, Union
 
 import numpy as np
 from my_ipc.public import (
+    IPCMessageType,
     ShmArrayInfo,
     ShmArray,
     generate_socket_path,
@@ -37,26 +38,32 @@ class IPCServer:
             shm_infos = json.loads(data)
             for name, info_json in shm_infos.items():
                 info = ShmArrayInfo.from_json(info_json)
-                shm = shared_memory.SharedMemory(
-                    name=generate_shm_name(self.id, name),
-                    create=False,
+                self.shm_arrs[name] = ShmArray(
+                    info=info, name=generate_shm_name(self.id, name), create=False
                 )
-                # 对于 create = False 的共享内存，不要让 resource_tracker 去跟踪它, 否则会报警告
-                resource_tracker.unregister(shm._name, "shared_memory")  # type: ignore
-                self.shm_arrs[name] = ShmArray(info=info, shm=shm)
 
             self.after_shm_created()
 
             while True:
                 data = recv_str(client_socket)
-                if not data or data.strip() == "QUIT":
+                if not data or data.strip() == IPCMessageType.QUIT.value:
                     break
+                if data.strip() == IPCMessageType.TMP_SHARED_ARRAY.value:
+                    shm_json = json.loads(recv_str(client_socket))
+                    tmp_shm_arr = ShmArray(
+                        info=ShmArrayInfo.from_json(shm_json["info"]),
+                        name=generate_shm_name(self.id, shm_json["name"]),
+                        create=False,
+                    )
+                    request = json.loads(recv_str(client_socket))
+                else:
+                    tmp_shm_arr = None
+                    request = json.loads(data)
 
-                request = json.loads(data)
                 try:
-                    response = self.handle_request(request)
+                    response = self.handle_request(request, tmp_shm=tmp_shm_arr)
                 except Exception:
-                    send_str(client_socket, "ERROR")
+                    send_str(client_socket, IPCMessageType.ERROR.value)
                     raise
 
                 send_str(client_socket, json.dumps(response))
@@ -67,28 +74,20 @@ class IPCServer:
             server_socket.close()
             os.unlink(self.socket_path)
             for shm_arr in self.shm_arrs.values():
-                shm_arr.shm.close()
+                shm_arr.close()
 
-    def handle_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """处理请求的抽象方法，子类需要实现"""
+    def handle_request(
+        self, request: Dict[str, Any], tmp_shm: Union[ShmArray, None]
+    ) -> Dict[str, Any]:
+        """
+        处理请求的抽象方法，子类需要实现
+        tmp_shm: 只可以写入，不可以读取
+        """
         raise NotImplementedError
 
     def after_shm_created(self):
         """在共享内存创建后调用的钩子方法，子类可选实现"""
         pass
 
-    def write_shared_array(self, data: np.ndarray, name: str = "default") -> None:
-        """将numpy数组写入共享内存"""
-        shm_arr = self.shm_arrs[name]
-        assert (
-            data.shape == shm_arr.info.shape
-        ), f"Expected shape {shm_arr.info.shape}, but got {data.shape}"
-        assert (
-            data.dtype == shm_arr.info.dtype
-        ), f"Expected dtype {shm_arr.info.dtype}, but got {data.dtype}"
-        shared_array = np.ndarray(data.shape, dtype=data.dtype, buffer=shm_arr.shm.buf)
-        np.copyto(shared_array, data)
-
-    def get_shm_array_info(self, name: str = "default") -> ShmArrayInfo:
-        """获取共享内存数组的信息"""
-        return self.shm_arrs[name].info
+    def get_shared_array(self, name: str = "default") -> ShmArray:
+        return self.shm_arrs[name]
