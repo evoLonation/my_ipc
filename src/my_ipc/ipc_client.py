@@ -4,7 +4,7 @@ import json
 import os
 import socket
 import time
-from typing import Any, Dict, Union, cast, overload, Tuple
+from typing import Any, Dict, Iterable, Union, cast, overload, Tuple
 import uuid
 
 import numpy as np
@@ -53,6 +53,7 @@ class IPCClient:
             wait_time += 1
 
         if not os.path.exists(self.socket_path):
+            self.process.terminate()
             raise RuntimeError("服务器启动超时")
 
         # 连接socket
@@ -106,6 +107,25 @@ class IPCClient:
             return json.loads(response_data), tmp_data
         else:
             return json.loads(response_data)
+
+    def send_stream_request(
+        self, request: Dict[str, Any]
+    ) -> Iterable[Dict[str, Any]]:
+        """发送流式请求，返回一个迭代器，每次迭代返回一个响应"""
+        send_str(self.socket, IPCMessageType.STREAM_REQUEST.value)
+        send_str(self.socket, json.dumps(request))
+        
+        while True:
+            response_type = recv_str(self.socket)
+            if response_type == IPCMessageType.STREAM_END.value:
+                break
+            elif response_type == IPCMessageType.ERROR.value:
+                raise RuntimeError("服务器处理流式请求时出错")
+            elif response_type == IPCMessageType.STREAM_DATA.value:
+                response_data = recv_str(self.socket)
+                yield json.loads(response_data)
+            else:
+                raise RuntimeError(f"未知的响应类型: {response_type}")
 
     def get_shared_array(self, name: str = "default") -> ShmArray:
         return self.shm_arrs[name]

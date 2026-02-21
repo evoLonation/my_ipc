@@ -2,7 +2,7 @@ import json
 from multiprocessing import resource_tracker, shared_memory
 import os
 import socket
-from typing import Any, Dict, Union
+from typing import Any, Dict, Iterable, Union
 
 import numpy as np
 from my_ipc.public import (
@@ -48,25 +48,35 @@ class IPCServer:
                 data = recv_str(client_socket)
                 if not data or data.strip() == IPCMessageType.QUIT.value:
                     break
-                if data.strip() == IPCMessageType.TMP_SHARED_ARRAY.value:
-                    shm_json = json.loads(recv_str(client_socket))
-                    tmp_shm_arr = ShmArray(
-                        info=ShmArrayInfo.from_json(shm_json["info"]),
-                        name=generate_shm_name(self.id, shm_json["name"]),
-                        create=False,
-                    )
+                if data.strip() == IPCMessageType.STREAM_REQUEST.value:
+                    # 处理流式请求
                     request = json.loads(recv_str(client_socket))
+                    try:
+                        for response in self.handle_stream_request(request):
+                            send_str(client_socket, IPCMessageType.STREAM_DATA.value)
+                            send_str(client_socket, json.dumps(response))
+                        send_str(client_socket, IPCMessageType.STREAM_END.value)
+                    except Exception:
+                        send_str(client_socket, IPCMessageType.ERROR.value)
+                        raise
                 else:
-                    tmp_shm_arr = None
-                    request = json.loads(data)
-
-                try:
-                    response = self.handle_request(request, tmp_shm=tmp_shm_arr)
-                except Exception:
-                    send_str(client_socket, IPCMessageType.ERROR.value)
-                    raise
-
-                send_str(client_socket, json.dumps(response))
+                    if data.strip() == IPCMessageType.TMP_SHARED_ARRAY.value:
+                        shm_json = json.loads(recv_str(client_socket))
+                        tmp_shm_arr = ShmArray(
+                            info=ShmArrayInfo.from_json(shm_json["info"]),
+                            name=generate_shm_name(self.id, shm_json["name"]),
+                            create=False,
+                        )
+                        request = json.loads(recv_str(client_socket))
+                    else:
+                        tmp_shm_arr = None
+                        request = json.loads(data)
+                    try:
+                        response = self.handle_request(request, tmp_shm=tmp_shm_arr)
+                    except Exception:
+                        send_str(client_socket, IPCMessageType.ERROR.value)
+                        raise
+                    send_str(client_socket, json.dumps(response))
 
             client_socket.close()
 
@@ -82,6 +92,14 @@ class IPCServer:
         """
         处理请求的抽象方法，子类需要实现
         tmp_shm: 只可以写入，不可以读取
+        """
+        raise NotImplementedError
+
+    def handle_stream_request(
+        self, request: Dict[str, Any]
+    ) -> Iterable[Dict[str, Any]]:
+        """
+        处理流式请求的抽象方法，子类需要实现
         """
         raise NotImplementedError
 

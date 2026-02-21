@@ -11,6 +11,9 @@ import enum
 class IPCMessageType(enum.Enum):
     QUIT = "QUIT"
     ERROR = "ERROR"
+    STREAM_REQUEST = "STREAM_REQUEST"
+    STREAM_DATA = "STREAM_DATA"
+    STREAM_END = "STREAM_END"
 
 
 def generate_socket_path(id: str) -> str:
@@ -72,15 +75,26 @@ class IPCServer:
                 if not data or data.strip() == IPCMessageType.QUIT.value:
                     break
 
-                request = json.loads(data)
-
-                try:
-                    response = self.handle_request(request)
-                except Exception:
-                    send_str(client_socket, IPCMessageType.ERROR.value)
-                    raise
-
-                send_str(client_socket, json.dumps(response))
+                if data.strip() == IPCMessageType.STREAM_REQUEST.value:
+                    # 处理流式请求
+                    request = json.loads(recv_str(client_socket))
+                    try:
+                        for response in self.handle_stream_request(request):
+                            send_str(client_socket, IPCMessageType.STREAM_DATA.value)
+                            send_str(client_socket, json.dumps(response))
+                        send_str(client_socket, IPCMessageType.STREAM_END.value)
+                    except Exception:
+                        send_str(client_socket, IPCMessageType.ERROR.value)
+                        raise
+                else:
+                    # 处理普通请求
+                    request = json.loads(data)
+                    try:
+                        response = self.handle_request(request)
+                    except Exception:
+                        send_str(client_socket, IPCMessageType.ERROR.value)
+                        raise
+                    send_str(client_socket, json.dumps(response))
 
             client_socket.close()
 
@@ -91,6 +105,13 @@ class IPCServer:
     def handle_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
         处理请求的抽象方法，子类需要实现
+        """
+        raise NotImplementedError
+
+    def handle_stream_request(self, request: Dict[str, Any]):
+        """
+        处理流式请求的抽象方法，子类需要实现
+        返回一个迭代器，每次迭代返回一个响应字典
         """
         raise NotImplementedError
 

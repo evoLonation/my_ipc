@@ -14,6 +14,9 @@ import enum
 class IPCMessageType(enum.Enum):
     QUIT = "QUIT"
     ERROR = "ERROR"
+    STREAM_REQUEST = "STREAM_REQUEST"
+    STREAM_DATA = "STREAM_DATA"
+    STREAM_END = "STREAM_END"
 
 
 def generate_socket_path(id: str) -> str:
@@ -72,6 +75,7 @@ class IPCClient:
             wait_time += 1
 
         if not os.path.exists(self.socket_path):
+            self.process.terminate()
             raise RuntimeError("服务器启动超时")
 
         # 连接socket
@@ -87,6 +91,23 @@ class IPCClient:
         if response_data == IPCMessageType.ERROR.value:
             raise RuntimeError("服务器处理请求时出错")
         return json.loads(response_data)
+
+    def send_stream_request(self, request: Dict[str, Any]):
+        """发送流式请求，返回一个迭代器，每次迭代返回一个响应"""
+        send_str(self.socket, IPCMessageType.STREAM_REQUEST.value)
+        send_str(self.socket, json.dumps(request))
+        
+        while True:
+            response_type = recv_str(self.socket)
+            if response_type == IPCMessageType.STREAM_END.value:
+                break
+            elif response_type == IPCMessageType.ERROR.value:
+                raise RuntimeError("服务器处理流式请求时出错")
+            elif response_type == IPCMessageType.STREAM_DATA.value:
+                response_data = recv_str(self.socket)
+                yield json.loads(response_data)
+            else:
+                raise RuntimeError(f"未知的响应类型: {response_type}")
 
     def close(self):
         if hasattr(self, "socket"):

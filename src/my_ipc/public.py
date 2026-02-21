@@ -13,6 +13,9 @@ class IPCMessageType(enum.Enum):
     QUIT = "QUIT"
     ERROR = "ERROR"
     TMP_SHARED_ARRAY = "TMP_SHARED_ARRAY"
+    STREAM_REQUEST = "STREAM_REQUEST"
+    STREAM_DATA = "STREAM_DATA"
+    STREAM_END = "STREAM_END"
 
 
 @dataclass
